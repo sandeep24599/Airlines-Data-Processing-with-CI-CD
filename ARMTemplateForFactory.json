@@ -1,0 +1,440 @@
+{
+	"$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {
+		"factoryName": {
+			"type": "string",
+			"metadata": "Data Factory name",
+			"defaultValue": "airlines-adf-dev"
+		},
+		"AzureDataLakeStorage1_accountKey": {
+			"type": "secureString",
+			"metadata": "Secure string for 'accountKey' of 'AzureDataLakeStorage1'"
+		},
+		"AzureDataLakeStorage1_properties_typeProperties_url": {
+			"type": "string",
+			"defaultValue": "https://airlinedevv.dfs.core.windows.net/"
+		}
+	},
+	"variables": {
+		"factoryId": "[concat('Microsoft.DataFactory/factories/', parameters('factoryName'))]"
+	},
+	"resources": [
+		{
+			"name": "[concat(parameters('factoryName'), '/airlinrpipeline')]",
+			"type": "Microsoft.DataFactory/factories/pipelines",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"activities": [
+					{
+						"name": "FindDailyFlightsFile",
+						"type": "GetMetadata",
+						"dependsOn": [],
+						"policy": {
+							"timeout": "0.12:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"dataset": {
+								"referenceName": "DailyFlightSource",
+								"type": "DatasetReference",
+								"parameters": {}
+							},
+							"fieldList": [
+								"exists"
+							],
+							"storeSettings": {
+								"type": "AzureBlobFSReadSettings",
+								"recursive": true,
+								"enablePartitionDiscovery": false
+							},
+							"formatSettings": {
+								"type": "DelimitedTextReadSettings"
+							}
+						}
+					},
+					{
+						"name": "Check Existance",
+						"type": "IfCondition",
+						"dependsOn": [
+							{
+								"activity": "FindDailyFlightsFile",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"userProperties": [],
+						"typeProperties": {
+							"expression": {
+								"value": "@activity('FindDailyFlightsFile').output.exists",
+								"type": "Expression"
+							},
+							"ifFalseActivities": [
+								{
+									"name": "PrintifDoesnotExist",
+									"type": "SetVariable",
+									"dependsOn": [],
+									"policy": {
+										"secureOutput": false,
+										"secureInput": false
+									},
+									"userProperties": [],
+									"typeProperties": {
+										"variableName": "FalseParam",
+										"value": {
+											"value": "@activity('FindDailyFlightsFile').output.exists",
+											"type": "Expression"
+										}
+									}
+								}
+							],
+							"ifTrueActivities": [
+								{
+									"name": "printifExists",
+									"type": "SetVariable",
+									"dependsOn": [],
+									"policy": {
+										"secureOutput": false,
+										"secureInput": false
+									},
+									"userProperties": [],
+									"typeProperties": {
+										"variableName": "TrueParam",
+										"value": {
+											"value": "@activity('FindDailyFlightsFile').output.exists",
+											"type": "Expression"
+										}
+									}
+								},
+								{
+									"name": "Data Transformations",
+									"type": "ExecuteDataFlow",
+									"dependsOn": [
+										{
+											"activity": "printifExists",
+											"dependencyConditions": [
+												"Succeeded"
+											]
+										}
+									],
+									"policy": {
+										"timeout": "0.12:00:00",
+										"retry": 0,
+										"retryIntervalInSeconds": 30,
+										"secureOutput": false,
+										"secureInput": false
+									},
+									"userProperties": [],
+									"typeProperties": {
+										"dataflow": {
+											"referenceName": "AirlineDataTransformation",
+											"type": "DataFlowReference",
+											"parameters": {},
+											"datasetParameters": {
+												"AirportDimData": {},
+												"DailyFlightData": {},
+												"WriteProcessedData": {}
+											}
+										},
+										"staging": {},
+										"compute": {
+											"coreCount": 8,
+											"computeType": "General"
+										},
+										"traceLevel": "Fine"
+									}
+								}
+							]
+						}
+					}
+				],
+				"policy": {
+					"elapsedTimeMetric": {}
+				},
+				"variables": {
+					"FalseParam": {
+						"type": "Boolean"
+					},
+					"TrueParam": {
+						"type": "Boolean"
+					}
+				},
+				"annotations": [],
+				"lastPublishTime": "2024-09-09T01:27:11Z"
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/datasets/DailyFlightSource')]",
+				"[concat(variables('factoryId'), '/dataflows/AirlineDataTransformation')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/AirlineDimSource')]",
+			"type": "Microsoft.DataFactory/factories/datasets",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"linkedServiceName": {
+					"referenceName": "AzureDataLakeStorage1",
+					"type": "LinkedServiceReference"
+				},
+				"annotations": [],
+				"type": "DelimitedText",
+				"typeProperties": {
+					"location": {
+						"type": "AzureBlobFSLocation",
+						"fileName": "airports.csv",
+						"folderPath": "landing-zn",
+						"fileSystem": "united-airlines"
+					},
+					"columnDelimiter": ",",
+					"escapeChar": "\\",
+					"firstRowAsHeader": true,
+					"quoteChar": "\""
+				},
+				"schema": [
+					{
+						"name": "airport_id",
+						"type": "String"
+					},
+					{
+						"name": "city",
+						"type": "String"
+					},
+					{
+						"name": "state",
+						"type": "String"
+					},
+					{
+						"name": "name",
+						"type": "String"
+					}
+				]
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/linkedServices/AzureDataLakeStorage1')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/DailyFlightSource')]",
+			"type": "Microsoft.DataFactory/factories/datasets",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"linkedServiceName": {
+					"referenceName": "AzureDataLakeStorage1",
+					"type": "LinkedServiceReference"
+				},
+				"annotations": [],
+				"type": "DelimitedText",
+				"typeProperties": {
+					"location": {
+						"type": "AzureBlobFSLocation",
+						"fileName": "flights.csv",
+						"folderPath": "landing-zn",
+						"fileSystem": "united-airlines"
+					},
+					"columnDelimiter": ",",
+					"escapeChar": "\\",
+					"firstRowAsHeader": true,
+					"quoteChar": "\""
+				},
+				"schema": [
+					{
+						"name": "Carrier",
+						"type": "String"
+					},
+					{
+						"name": "OriginAirportID",
+						"type": "String"
+					},
+					{
+						"name": "DestAirportID",
+						"type": "String"
+					},
+					{
+						"name": "DepDelay",
+						"type": "String"
+					},
+					{
+						"name": "ArrDelay",
+						"type": "String"
+					}
+				]
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/linkedServices/AzureDataLakeStorage1')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/ProcessedData')]",
+			"type": "Microsoft.DataFactory/factories/datasets",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"linkedServiceName": {
+					"referenceName": "AzureDataLakeStorage1",
+					"type": "LinkedServiceReference"
+				},
+				"annotations": [],
+				"type": "DelimitedText",
+				"typeProperties": {
+					"location": {
+						"type": "AzureBlobFSLocation",
+						"folderPath": "processed-data",
+						"fileSystem": "united-airlines"
+					},
+					"columnDelimiter": ",",
+					"escapeChar": "\\",
+					"firstRowAsHeader": true,
+					"quoteChar": "\""
+				},
+				"schema": []
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/linkedServices/AzureDataLakeStorage1')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/AzureDataLakeStorage1')]",
+			"type": "Microsoft.DataFactory/factories/linkedServices",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"annotations": [],
+				"type": "AzureBlobFS",
+				"typeProperties": {
+					"url": "[parameters('AzureDataLakeStorage1_properties_typeProperties_url')]",
+					"accountKey": {
+						"type": "SecureString",
+						"value": "[parameters('AzureDataLakeStorage1_accountKey')]"
+					}
+				}
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/AirlineDataTransformation')]",
+			"type": "Microsoft.DataFactory/factories/dataflows",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"type": "MappingDataFlow",
+				"typeProperties": {
+					"sources": [
+						{
+							"dataset": {
+								"referenceName": "AirlineDimSource",
+								"type": "DatasetReference"
+							},
+							"name": "AirportDimData",
+							"description": "Import data from AirportDimSource"
+						},
+						{
+							"dataset": {
+								"referenceName": "DailyFlightSource",
+								"type": "DatasetReference"
+							},
+							"name": "DailyFlightData",
+							"description": "Import data from DailyFlightSource"
+						}
+					],
+					"sinks": [
+						{
+							"dataset": {
+								"referenceName": "ProcessedData",
+								"type": "DatasetReference"
+							},
+							"name": "WriteProcessedData",
+							"description": "Export data to processed Data"
+						}
+					],
+					"transformations": [
+						{
+							"name": "joinOnDeptAirport",
+							"description": "inner join 'DailyflightsData' and 'AirportDimData'"
+						},
+						{
+							"name": "DeriveDeptAirport"
+						},
+						{
+							"name": "joinOnArrivalAirport",
+							"description": "InnerJoin on 'DeriveDeptAirport' and 'AirportDimData'"
+						},
+						{
+							"name": "DeriveArrivalAirport"
+						}
+					],
+					"scriptLines": [
+						"source(output(",
+						"          airport_id as integer,",
+						"          city as string,",
+						"          state as string,",
+						"          name as string",
+						"     ),",
+						"     allowSchemaDrift: true,",
+						"     validateSchema: false,",
+						"     ignoreNoFilesFound: false) ~> AirportDimData",
+						"source(output(",
+						"          Carrier as string,",
+						"          OriginAirportID as integer,",
+						"          DestAirportID as integer,",
+						"          DepDelay as integer,",
+						"          ArrDelay as integer",
+						"     ),",
+						"     allowSchemaDrift: true,",
+						"     validateSchema: false,",
+						"     ignoreNoFilesFound: false) ~> DailyFlightData",
+						"DailyFlightData, AirportDimData join(OriginAirportID == airport_id,",
+						"     joinType:'inner',",
+						"     matchType:'exact',",
+						"     ignoreSpaces: false,",
+						"     broadcast: 'auto')~> joinOnDeptAirport",
+						"joinOnDeptAirport select(mapColumn(",
+						"          Carrier,",
+						"          DestAirportID,",
+						"          DepDelay,",
+						"          ArrDelay,",
+						"          airport_id,",
+						"          DepCity = city,",
+						"          DepState = state,",
+						"          DepAirportName = name",
+						"     ),",
+						"     skipDuplicateMapInputs: true,",
+						"     skipDuplicateMapOutputs: true) ~> DeriveDeptAirport",
+						"DeriveDeptAirport, AirportDimData join(DestAirportID == AirportDimData@airport_id,",
+						"     joinType:'inner',",
+						"     matchType:'exact',",
+						"     ignoreSpaces: false,",
+						"     broadcast: 'auto')~> joinOnArrivalAirport",
+						"joinOnArrivalAirport select(mapColumn(",
+						"          Carrier,",
+						"          DepDelay,",
+						"          ArrDelay,",
+						"          DepCity,",
+						"          DepState,",
+						"          DepAirportName,",
+						"          ArrCity = city,",
+						"          ArrState = state,",
+						"          ArrAirportName = name",
+						"     ),",
+						"     skipDuplicateMapInputs: true,",
+						"     skipDuplicateMapOutputs: true) ~> DeriveArrivalAirport",
+						"DeriveArrivalAirport sink(allowSchemaDrift: true,",
+						"     validateSchema: false,",
+						"     truncate: true,",
+						"     umask: 0022,",
+						"     preCommands: [],",
+						"     postCommands: [],",
+						"     skipDuplicateMapInputs: true,",
+						"     skipDuplicateMapOutputs: true) ~> WriteProcessedData"
+					]
+				}
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/datasets/AirlineDimSource')]",
+				"[concat(variables('factoryId'), '/datasets/DailyFlightSource')]",
+				"[concat(variables('factoryId'), '/datasets/ProcessedData')]"
+			]
+		}
+	]
+}
